@@ -9,6 +9,7 @@ import logging
 from typing import List
 import os
 import mysql.connector
+from mysql.connector import connection
 
 PII_FIELDS = ("name", "email", "phone", "ssn", "password")
 
@@ -27,8 +28,10 @@ def filter_datum(fields: List[str], redaction: str,
     Returns:
         str: The obfuscated log message.
     """
-    pattern = f"({'|'.join(fields)})=[^{separator}]*"
-    return re.sub(pattern, f'\\1={redaction}', message)
+    for field in fields:
+        message = re.sub(f'{field}=.*?{separator}',
+                         f'{field}={redaction}{separator}', message)
+    return message
 
 
 class RedactingFormatter(logging.Formatter):
@@ -64,9 +67,9 @@ class RedactingFormatter(logging.Formatter):
         Returns:
             str: The formatted and redacted log string.
         """
-        original_message = super(RedactingFormatter, self).format(record)
-        return filter_datum(self.fields, self.REDACTION,
-                            original_message, self.SEPARATOR)
+        record.msg = filter_datum(self.fields, self.REDACTION,
+                                  record.getMessage(), self.SEPARATOR)
+        return super(RedactingFormatter, self).format(record)
 
 
 def get_logger() -> logging.Logger:
@@ -92,7 +95,7 @@ def get_logger() -> logging.Logger:
     return logger
 
 
-def get_db() -> mysql.connector.connection.MySQLConnection:
+def get_db() -> connection.MySQLConnection:
     """
     Returns a connector to the secure database.
 
@@ -108,12 +111,10 @@ def get_db() -> mysql.connector.connection.MySQLConnection:
     host = os.environ.get("PERSONAL_DATA_DB_HOST", "localhost")
     db_name = os.environ.get("PERSONAL_DATA_DB_NAME")
 
-    cnx = mysql.connector.connect(
-        user=username,
-        password=password,
-        host=host,
-        database=db_name
-    )
+    cnx = mysql.connector.connect(user=username,
+                                  password=password,
+                                  host=host,
+                                  database=db_name)
     return cnx
 
 
@@ -135,7 +136,7 @@ def main():
     for row in cursor:
         message_parts = [f"{field}={value}" for field, value in
                          zip(field_names, row)]
-        message = ";".join(message_parts) + ";"
+        message = "; ".join(message_parts) + ";"
         logger.info(message)
 
     cursor.close()
